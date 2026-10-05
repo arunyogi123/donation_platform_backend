@@ -12,4 +12,5 @@ wheels/
 db.sqlite3
 public
 seed_data.py
+.vscode
 
