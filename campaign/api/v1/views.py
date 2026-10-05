@@ -40,18 +40,55 @@ class CampaignView(GenericAPIView):
         tags=["Campaign"],
     )
     def post(self, request):
+        if not (request.user and request.user.is_authenticated):
+            return Response(
+                {"detail": "Authentication required. Please log in before creating a campaign."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        # Enforce Creator Profile & Required Verification Documents
+        profile = getattr(request.user, "profile", None)
+        if not profile or not profile.is_creator_ready:
+            missing = profile.get_missing_creator_requirements() if profile else ["Creator profile"]
+            return Response(
+                {
+                    "detail": "Please complete your creator profile and upload all required documents before creating a campaign.",
+                    "missing_requirements": missing,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Enforce Campaign Cover Photograph
+        if not request.FILES.get("image") and not request.data.get("image") and not request.data.get("image_url"):
+            return Response(
+                {
+                    "detail": "Please upload a campaign cover photograph.",
+                    "image": ["Campaign cover photograph is required."],
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Enforce Campaign Case Supporting Document (Mandatory)
+        document_file = request.FILES.get("document") or request.FILES.get("document_file")
+        doc_files = request.FILES.getlist("documents")
+        if not document_file and not doc_files:
+            return Response(
+                {
+                    "detail": "Please upload at least one supporting document for this campaign.",
+                    "document": ["At least one campaign case supporting document is required."],
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         data = request.data
         serializer = CampaignSerializers(data=data, context={"request": request})
         if serializer.is_valid():
-            extra_kwargs = {}
-            if request.user and request.user.is_authenticated:
-                extra_kwargs["user"] = request.user
-                if not serializer.validated_data.get("organizer_name"):
-                    extra_kwargs["organizer_name"] = request.user.get_full_name() or request.user.username
+            extra_kwargs = {"user": request.user}
+            if not serializer.validated_data.get("organizer_name"):
+                extra_kwargs["organizer_name"] = profile.full_name or request.user.get_full_name() or request.user.username
             campaign = serializer.save(**extra_kwargs)
 
             # Support uploading essential document alongside campaign creation in a single multipart request
-            document_file = request.FILES.get("document") or request.FILES.get("document_file")
             doc_type = request.data.get("document_type", "medical")
             if document_file:
                 doc_serializer = CampaignDocumentSerializer(
@@ -60,6 +97,7 @@ class CampaignView(GenericAPIView):
                 )
                 if doc_serializer.is_valid():
                     doc_serializer.save(campaign=campaign)
+
 
             doc_files = request.FILES.getlist("documents")
             for f in doc_files:
@@ -76,6 +114,7 @@ class CampaignView(GenericAPIView):
                 status=status.HTTP_201_CREATED,
             )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 
 class CampaignDetailView(GenericAPIView):
