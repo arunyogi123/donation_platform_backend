@@ -1,9 +1,12 @@
 import requests
+from django.conf import settings
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404, render
 
+from campaign.models import Campaign
+from django.db.models import F
 from receipts.models import Billing, BillingStatus, PaymentMethod
 from donations.models import Donation, RecurringDonation, PaymentType
 from payments.utils import KhaltiPayment
@@ -40,6 +43,7 @@ def donation_callback(request):
     context = {
         "transaction_id": pidx,
         "amount": donation.amount,
+        "frontend_url": settings.FRONTEND_URL,
     }
 
     if Billing.objects.filter(transaction_id=pidx).exists():
@@ -78,24 +82,31 @@ def initiate_recurring(request, recurring_id):
     plan = get_object_or_404(RecurringDonation, id=recurring_id, donor=request.user)
 
     if not plan.is_active:
-        return Response({"error": "Recurring plan is not active"}, status=400)
-
-    if plan.is_processing:
-        return Response({"error": "Payment already in progress"}, status=400)
+        plan.is_active = True
+        plan.save(update_fields=["is_active"])
 
     plan.is_processing = True
-    plan.save()
+    plan.save(update_fields=["is_processing"])
 
-    data = KhaltiPayment.initiate_payment(
-        amount=plan.amount,
-        donation_id=plan.id,
-        return_url="http://127.0.0.1:8000/api/payments/recurring/callback/",
-        name=request.user.username,
-        email=request.user.email,
-        phone=request.user.phone or "9800000000",
-    )
+    phone_num = getattr(request.user, "phone", None) or "9800000000"
 
-    return Response({"payment_url": data.get("payment_url")})
+    try:
+        data = KhaltiPayment.initiate_payment(
+            amount=plan.amount,
+            donation_id=plan.id,
+            return_url=f"{settings.FRONTEND_URL}/api/payments/recurring/callback/",
+            name=request.user.username or "GiveHope Donor",
+            email=request.user.email,
+            phone=phone_num,
+        )
+        return Response({"payment_url": data.get("payment_url")})
+    except Exception as exc:
+        plan.is_processing = False
+        plan.save(update_fields=["is_processing"])
+        return Response(
+            {"error": f"Failed to initialize payment gateway: {str(exc)}"},
+            status=status.HTTP_502_BAD_GATEWAY
+        )
 
 
 @api_view(["GET"])
@@ -109,6 +120,8 @@ def recurring_callback(request):
     context = {
         "transaction_id": pidx,
         "amount": plan.amount,
+        "recurring_id": plan.id,
+        "frontend_url": settings.FRONTEND_URL,
     }
 
     if Billing.objects.filter(transaction_id=pidx).exists():
@@ -116,22 +129,15 @@ def recurring_callback(request):
 
     if status_param and status_param.lower() == "user canceled":
         plan.last_payment_status = PaymentType.FAILURE
+        plan.is_processing = False
         plan.save()
         return render(request, "payment/index.html", {**context, "status": "cancelled"})
 
     response = KhaltiPayment.verify_payment(pidx)
 
     if response.get("status") == "Completed":
-        donation = Donation.objects.create(
-            donor=plan.donor,
-            campaign=plan.campaign,
-            amount=plan.amount,
-            currency=plan.currency,
-            is_anonymous=plan.is_anonymous,
-            payment_status=PaymentType.SUCCESS,
-        )
         Billing.objects.create(
-            donation=donation,
+            donation=None,
             recurring_donation=plan,
             transaction_id=pidx,
             amount=plan.amount,
@@ -139,6 +145,9 @@ def recurring_callback(request):
             status=BillingStatus.SUCCESS,
             payment_method=PaymentMethod.KHALTI,
             is_recurring=True,
+        )
+        Campaign.objects.filter(pk=plan.campaign_id).update(
+            current_raised=F("current_raised") + plan.amount
         )
         plan.mark_success()
         return render(request, "payment/index.html", {**context, "status": "success"})
