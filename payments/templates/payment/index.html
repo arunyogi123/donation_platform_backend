@@ -133,9 +133,15 @@
         {% endif %}
 
         <div style="margin-top: 1.75rem;">
-            <a href="http://localhost:3000/my-donations" style="display: inline-block; padding: 0.75rem 1.5rem; background: #0D5C3A; color: white; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
-                Return to Dashboard
+            {% if recurring_id %}
+            <a href="{{ frontend_url }}/my-recurring-donations" style="display: inline-block; padding: 0.75rem 1.5rem; background: #0D5C3A; color: white; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+                View My Recurring Donations
             </a>
+            {% else %}
+            <a href="{{ frontend_url }}/my-donations" style="display: inline-block; padding: 0.75rem 1.5rem; background: #0D5C3A; color: white; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+                View My Donations
+            </a>
+            {% endif %}
         </div>
     </div>
 </body>
