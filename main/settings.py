@@ -12,9 +12,31 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 from datetime import timedelta
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _get_frontend_url():
+    frontend_url = os.getenv("FRONTEND_URL")
+    if frontend_url:
+        return frontend_url.strip().rstrip("/")
+
+    env_file = BASE_DIR / ".env"
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            key, separator, value = line.partition("=")
+            if separator and key.strip() == "FRONTEND_URL":
+                value = value.strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                    value = value[1:-1]
+                return value.rstrip("/")
+
+    return ""
+
+
+FRONTEND_URL = _get_frontend_url()
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
