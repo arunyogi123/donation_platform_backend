@@ -136,15 +136,20 @@ class RecurringDonationView(GenericAPIView):
         )
 
         if serializer.is_valid():
+            # Default is_active to True so it is immediately eligible for payment initiation
+            is_active_val = False if request.data.get("is_active") is False or request.data.get("is_active") == "false" else True
             recurring = serializer.save(
                 donor=request.user,
+                is_active=is_active_val,
             )
             data = dict(serializer.data)
             data["recurring_id"] = recurring.id
+            data["is_active"] = recurring.is_active
             data["message"] = "Recurring donation created, proceed to payment"
             return Response(data, status=status.HTTP_201_CREATED)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 
 class RecurringManage(GenericAPIView):

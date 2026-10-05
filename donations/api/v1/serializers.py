@@ -6,6 +6,11 @@ from donations.models import Donation, RecurringDonation
 # 🔁 RECURRING DONATION
 # =========================
 class RecurringSerializer(serializers.ModelSerializer):
+    campaign_title = serializers.CharField(
+        source="campaign.title",
+        read_only=True
+    )
+    is_active = serializers.BooleanField(default=True, required=False)
 
     class Meta:
         model = RecurringDonation
@@ -20,6 +25,7 @@ class RecurringSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
