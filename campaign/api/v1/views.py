@@ -1,4 +1,5 @@
 from campaign.models import Campaign, SubscriptionPlan, CampaignDocument
+from account.models import Profile
 from rest_framework.response import Response
 from rest_framework.decorators import api_view
 from rest_framework import status
@@ -47,9 +48,9 @@ class CampaignView(GenericAPIView):
             )
 
         # Enforce Creator Profile & Required Verification Documents
-        profile = getattr(request.user, "profile", None)
-        if not profile or not profile.is_creator_ready:
-            missing = profile.get_missing_creator_requirements() if profile else ["Creator profile"]
+        profile, _ = Profile.objects.get_or_create(user=request.user)
+        if not (request.user.is_staff or request.user.is_superuser or profile.is_creator_ready):
+            missing = profile.get_missing_creator_requirements()
             return Response(
                 {
                     "detail": "Please complete your creator profile and upload all required documents before creating a campaign.",
@@ -68,10 +69,10 @@ class CampaignView(GenericAPIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Enforce Campaign Case Supporting Document (Mandatory)
+        # Enforce Campaign Case Supporting Document (Mandatory for non-staff)
         document_file = request.FILES.get("document") or request.FILES.get("document_file")
         doc_files = request.FILES.getlist("documents")
-        if not document_file and not doc_files:
+        if not (request.user.is_staff or request.user.is_superuser) and not document_file and not doc_files:
             return Response(
                 {
                     "detail": "Please upload at least one supporting document for this campaign.",
