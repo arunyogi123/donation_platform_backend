@@ -72,3 +72,17 @@ class DonationSerializer(serializers.ModelSerializer):
                 data["donor"] = "***"
 
         return data
+
+
+# =========================
+# 🌟 PUBLIC DONOR (CAROUSEL)
+# =========================
+class PublicDonorSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    username = serializers.CharField()
+    full_name = serializers.CharField(allow_blank=True, required=False)
+    profile_picture = serializers.CharField(allow_null=True, required=False)
+    total_donated = serializers.DecimalField(max_digits=12, decimal_places=2)
+    currency = serializers.CharField(default="NPR")
+    donation_count = serializers.IntegerField(default=1)
+    last_donated = serializers.DateTimeField(allow_null=True, required=False)

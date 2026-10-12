@@ -1,16 +1,22 @@
-from donations.models import Donation, RecurringDonation
+from donations.models import Donation, RecurringDonation, RecurringDonationHistory
 from rest_framework.response import Response
 from rest_framework import status
 from drf_spectacular.utils import extend_schema
-from rest_framework.permissions import IsAdminUser
+from rest_framework.permissions import IsAdminUser, IsAuthenticated, AllowAny
 from rest_framework.generics import GenericAPIView
-from donations.api.v1.serializers import DonationSerializer, RecurringSerializer
-from rest_framework.permissions import IsAuthenticated
+from donations.api.v1.serializers import (
+    DonationSerializer,
+    RecurringSerializer,
+    PublicDonorSerializer,
+)
 from donations.permission import IsOwnerOrAdmin
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
+from django.db.models import Sum, Count, Max
+from decimal import Decimal
 import uuid
-from receipts.models import Billing,BillingStatus,PaymentMethod
+from receipts.models import Billing, BillingStatus, PaymentMethod
+from account.models import User
 
 
 class DonationView(GenericAPIView):
@@ -191,3 +197,105 @@ class RecurringManage(GenericAPIView):
         donation.delete()
 
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class PublicDonorsView(GenericAPIView):
+    permission_classes = [AllowAny]
+    serializer_class = PublicDonorSerializer
+
+    @extend_schema(
+        summary="List public donors with total successful contributions",
+        tags=["Donation"],
+        responses={200: PublicDonorSerializer(many=True)},
+    )
+    def get(self, request):
+        donors_map = {}
+
+        # 1. Successful one-time public donations
+        one_time_qs = (
+            Donation.objects.filter(payment_status="SUCCESS", is_anonymous=False)
+            .values("donor")
+            .annotate(
+                total=Sum("amount"),
+                count=Count("id"),
+                last=Max("created_at"),
+            )
+        )
+        for row in one_time_qs:
+            d_id = row["donor"]
+            if d_id:
+                donors_map[d_id] = {
+                    "total": row["total"] or Decimal("0"),
+                    "count": row["count"],
+                    "last": row["last"],
+                }
+
+        # 2. Successful recurring donation history (where recurring_donation is not anonymous)
+        recurring_qs = (
+            RecurringDonationHistory.objects.filter(
+                payment_status="SUCCESS",
+                recurring_donation__is_anonymous=False,
+            )
+            .values("donor")
+            .annotate(
+                total=Sum("amount"),
+                count=Count("id"),
+                last=Max("paid_at"),
+            )
+        )
+        for row in recurring_qs:
+            d_id = row["donor"]
+            if d_id:
+                if d_id in donors_map:
+                    donors_map[d_id]["total"] += row["total"] or Decimal("0")
+                    donors_map[d_id]["count"] += row["count"]
+                    if row["last"] and (
+                        not donors_map[d_id]["last"] or row["last"] > donors_map[d_id]["last"]
+                    ):
+                        donors_map[d_id]["last"] = row["last"]
+                else:
+                    donors_map[d_id] = {
+                        "total": row["total"] or Decimal("0"),
+                        "count": row["count"],
+                        "last": row["last"],
+                    }
+
+        if not donors_map:
+            return Response([], status=status.HTTP_200_OK)
+
+        users = User.objects.filter(id__in=donors_map.keys()).select_related("profile")
+        results = []
+        for user in users:
+            stats = donors_map.get(user.id, {})
+            profile = getattr(user, "profile", None)
+            profile_pic = None
+            if profile and profile.profile_picture:
+                try:
+                    profile_pic = (
+                        request.build_absolute_uri(profile.profile_picture.url)
+                        if request
+                        else profile.profile_picture.url
+                    )
+                except Exception:
+                    profile_pic = profile.profile_picture.url
+
+            # Public username only - never expose email or phone
+            username = user.username or (profile.full_name if profile else f"donor_{user.id}")
+            if "@" in username:
+                username = username.split("@")[0]
+
+            results.append({
+                "id": user.id,
+                "username": username,
+                "full_name": profile.full_name if profile else "",
+                "profile_picture": profile_pic,
+                "total_donated": stats.get("total", Decimal("0")),
+                "currency": "NPR",
+                "donation_count": stats.get("count", 1),
+                "last_donated": stats.get("last"),
+            })
+
+        # Sort highest total donated first
+        results.sort(key=lambda x: x["total_donated"], reverse=True)
+        serializer = PublicDonorSerializer(results, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)

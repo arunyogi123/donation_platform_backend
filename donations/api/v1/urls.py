@@ -5,6 +5,7 @@ from donations.api.v1.views import (
     MyDonationsView,
     RecurringDonationView,
     RecurringManage,
+    PublicDonorsView,
 )
 
 urlpatterns = [
@@ -14,4 +15,6 @@ urlpatterns = [
     path("recurring-view", RecurringDonationView.as_view(), name="recurring-view-noslash"),
     path("recurring-view/", RecurringDonationView.as_view(), name="recurring-view"),
     path("recurring-manage/<int:id>/", RecurringManage.as_view(), name="update-delete"),
+    path("public-donors/", PublicDonorsView.as_view(), name="public-donors"),
+    path("public-donors", PublicDonorsView.as_view(), name="public-donors-noslash"),
 ]
